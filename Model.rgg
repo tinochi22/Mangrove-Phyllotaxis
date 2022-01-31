@@ -1,0 +1,831 @@
+/*
+ * Reconstruction of red mangrove saplings from FASTRAK measurements
+ * 
+ * Before running the model, modify the paths to your system (csv_path, csv_path_leaf)
+ *
+ * For tree reconstruction with leaves:
+ *		set the leaf type flag (flagLeafType): LEAF_DEFAULT (false colured cylinders),
+ *			LEAF_TEXTURE (leaves with photorealistic textures), LEAF_MESH (leaves as triangulated mesh)
+ * 		press reconstructTree, reconstructLeaves
+ * 		optionally, press calcLight to calculate absorbed light (only for LEAF_MESH and LEAF_NICE)
+ *
+ * Note: reconstructTree reads in the measured data from csv and recreates topology 
+ * (the latter might be slow)
+ *
+ * Colour code for leaves (if flagLeafType = LEAF_DEFAULT):
+ *        blue - leaves at the base of apical bud
+ *        pink - first leaf pair on leafy shoot
+ *        red - leaf pairs on leafy shoot except the base one
+ *
+ * For description of available methods see below in the model overview. 
+ *
+ *******************************************************************************
+ * Model overview:
+ *
+ * Modules:
+ * 			Node
+ *			Internode
+ *			LeafTexture			parallelogram with texture
+ *			Leaf				cylinder, for testing
+ *			LeafMesh
+ *			MeshNodeCustom
+ *			Petiole
+ *
+ * Public methods (Model.rgg; execution buttons):
+ *
+ *			reconstructTree()	calls readCSV() & connect()
+ *
+ *			all other public methods can be executed after reconstructTree():
+ *
+ *			analyse()			print out values for the reconstructed structure (ID, order, part, brAngle, Length Total, Length without Bud, Length Leafy, Length of Bud, Ratio, Number Leaves)
+ *								visual analysis (fist internode of a branch - blue, leafy segments - yellow)
+ *			selectBranch()		click on an internode, then press select branch;
+ *								all internodes of the branch will be coloured red, with some information in the console (ids)
+ *			reconstructLeaves()	add leaves to leafy segments, without or with textures
+ *
+ *			calcLight()			call the light model to calculate how much light is absorbed by leaves 
+ *
+ * Methods (Model.rgg):
+ *
+ *			readCSV()			read data from Fastrak measurement file and visualise 
+ *								branching structure, without topology (all objects are connected to the root) 
+ *								colour code: root - gray, main stem or branches - brown, ap. bud - green
+ *			connect()			reconstruct the tree topology
+ *
+ *			roundup(double value, int precision)	help method for rounding up
+ *
+ *			addTextureTree()	add textures to branches, roots and apical bud
+ *
+ * Methods (leaves.rgg):
+ *
+ *			drawLeaves()		add leaves as cylinders, place them acc to the phyllotaxis model
+ *			drawLeavesTexture()		replace cylindrical leaves by leaves (as parallelograms) with textures
+ *			drawLeavesMesh()	replace cylindrical leaves by leaf mesh
+ *
+ * Implementation: Katarina Streit, Tino Chi, Winfried Kurth
+ * University of Goettingen, Germany & Wageningen University and Research, The Netherlands
+ * Version January 2022
+ * 
+ * Implementation of light sources and radiation calculation based on:
+ * https://git.wur.nl/jochemevers1/FSPM_BASIC
+ */
+
+import java.io.*;
+import de.grogra.xl.util.FloatList;
+import de.grogra.vecmath.Math2;
+import de.grogra.gpuflux.tracer.FluxLightModelTracer.MeasureMode;
+
+import static leaves.*;
+import static light.*;
+import static environment.*;
+
+
+////////////////////////////////////////////////////////////////////////////////
+// MODULES
+////////////////////////////////////////////////////////////////////////////////
+
+module Node(String nID, String nCode) extends Sphere(1)
+{
+	{
+		//setShader(RED);
+		setShader(EGA_6);
+	}
+}
+
+
+module Internode(int id2, super.length, super.baseRadius, super.topRadius,
+	@Range(min=-0.9999999, max=0.9999999) double sx,
+	@Range(min=-0.9999999, max=0.9999999) double sz) extends Frustum(length, baseRadius, topRadius)
+{       
+	Matrix4d ltr;
+	double sxo = 0.0;
+	double szo = 0.0;
+	boolean beginBranch = false;
+	int order = 1;
+	
+	String part = null;           	// internode type (mainst, apbud, rt, deadrt, br, deadbr)
+	boolean apBud = false;        	// true if the intenode is apical bud
+	boolean hasLeaves = false;    	// true if the internode has leaves
+	
+	int nbLeaves = 0;            	// # leaves from the base of this internode and above
+   
+	// to store segment distances from the base of the leafy part
+	// unit is cm!!
+	double distanceInternodeCum = 0;
+	double distanceInternodeCumPrevious = 0;
+	int rank = 0;                	// leaf rank (position) in a leafy shoot (0 = base of the leafy part)
+	
+	int rankSingle = -1;        	// rank of the single leaf (per default all ranks are considered to have a pair of leaves)
+	
+	double[] distanceLeafPair;
+	double[] distanceLeafPairCum;
+	
+	{
+		setShader(EGA_6);
+		setTransform(new TMatrix4d());
+	}
+
+	public void setBegin() {
+		beginBranch = true;
+	}
+	
+	public void setLocation(Point3d location)
+	{
+		((TMatrix4d) this[transform])[m03] = location.x;
+		((TMatrix4d) this[transform])[m13] = location.y;
+		((TMatrix4d) this[transform])[m23] = location.z;
+	}
+	
+	public void setDirection(Vector3d direction)
+	{
+		final Matrix3d m = new Matrix3d();
+		Math2.getOrthogonalBasis(direction, m, true);
+		((TMatrix4d) this[transform]).setRotationScale(m);
+	}
+}
+
+
+// leaf with photo shader
+module LeafTexture(super.length, float width) extends Parallelogram(length, width)
+{
+	{ setShader(leafShader); }
+}
+
+
+// for testing: leaf as a cylinder
+module Leaf(super.length, super.diameter) extends F(length, diameter)
+{
+	int rank;						// position on the leafy part
+}
+
+module LeafMesh
+{
+	int rank;						// position on the leafy part
+	double abs;						// absorbed radiation (umol / s)
+	double absm2;					// absorbed radiation per unit area (umol / m2 / s)
+}
+
+module MeshNodeCustom extends MeshNode
+{
+	double abs;						// absorbed radiation (umol / s)
+	double absm2;					// absorbed radiation per unit area (umol / m2 / s)
+	double area;
+	double fabs;					// fraction of globRad absorbed	
+}
+
+// leaf petiole
+module Petiole(super.length, super.radius) extends Cylinder(length, radius)
+{
+	{ setShader(budShader); }
+}
+
+// reference tile (sensor) to measure incoming radiation
+module RefTile(double len, double wid)
+{
+	double abs;						// absorbed radiation (umol / s)
+	double absm2;					// absorbed radiation per unit area (umol / m2 / s)
+	
+	double getArea() {
+		return len*wid;
+	}
+}
+==> RL(-90)
+Parallelogram(len, wid).(setShader(mangroveShader));
+
+
+////////////////////////////////////////////////////////////////////////////////
+// SET THE PATHS!
+////////////////////////////////////////////////////////////////////////////////
+
+// data file with measured points
+static String csv_path =
+	"C:\\Users\\strei002\\git\\Mangrove-Phyllotaxis\\TF_05_Adjusted.csv";
+
+// data file with measured points for a leaf
+static String csv_path_leaf =
+	"C:\\Users\\strei002\\git\\Mangrove-Phyllotaxis\\leaf_v2.txt";
+
+
+////////////////////////////////////////////////////////////////////////////////
+// MODEL PARAMETERS
+////////////////////////////////////////////////////////////////////////////////
+
+// get values from file with no translation (OG file)
+const float X0					= 146.6799927;
+const float Y0					= 10.39999962;
+const float Z0					= 110.4199982;
+
+const int LEAF_DEFAULT = 0;	// leaves as cylinders with false colouring
+const int LEAF_TEXTURE = 1;	// leaves as parallelograms, textures for leaves and bark will be used
+const int LEAF_MESH = 2;	// leaves as meshes, no textures, shaders with optical properties
+
+static int flagLeafType 		= LEAF_MESH;	// options: LEAF_DEFAULT, LEAF_TEXTURE, LEAF_MESH
+
+static boolean drawNodes		= false;	// true - test option, use only for visual inspection of nodes
+											// try to avoid otherwise; if true, other methods will not work (analyse, select branch, draw leaves)
+
+static boolean showSunSky 		= true;		// light sources representing the sky and the daily sun course
+
+static boolean lmCPU 			= true;		// version of the light model (CPU vs GPU)
+
+//static boolean visualizeLight	= true;		// works ONLY IN THE LATEST GROIMP 1.6 (late 2020 release)
+											
+const ShaderRef leafShader		= shader("leaf2");	// options: leaf, leaf2
+const ShaderRef barkShader		= shader("bark3");	// options: bark, bark2, bark3
+const ShaderRef rootShader		= shader("root");	// options: root
+const ShaderRef budShader		= shader("bud");	// options: bud
+
+// according to Detres et al. (2001)
+// upper side leaf, 550 nm
+static Phong mangroveShader = new Phong()
+	.(setDiffuse(new Graytone(0.15)))				// 15% reflected
+	.(setDiffuseTransparency(new Graytone(0.09)));	// 9% transmitted
+// gui, raytracer, radiation
+static AlgorithmSwitchShader mangroveShaderAS = new AlgorithmSwitchShader(GREEN, GREEN, mangroveShader);
+
+
+const double LEAF_ANGLE_MIN		= 75;
+const double LEAF_ANGLE_MAX		= 75;
+const double LEAF_PAIR_ANGLE	= 180;
+const double LEAF_PHYLLO_ANGLE	= 81.7;
+const double LEAF_LENGTH		= 0.12;        // in m
+const double LEAF_WIDTH			= 0.05;        // in m
+
+const double CM_TO_M			= 1e-2;
+const double M_TO_CM			= 1e2;
+
+const double MIN_LENGTH_TIP		= 0.3;    		// in cm
+
+// double tmp = LENGTH_LEAFY/((i+A)*i);
+const double A					= 1;
+
+
+const boolean RANDOM_LEAF_POS	= true;	
+const double RANDOM_AVG			= 1;			// average offset
+const double RANDOM_DEV			= 0.01;	
+const double RANDOM_MAX			= 1;			// upper boundary of the random value
+//const double RANDOM_MAX			= RANDOM_AVG + 3*RANDOM_DEV;
+
+
+static double[] faces;
+static double[] vertex;
+
+
+
+protected void init()
+[
+	{ clearConsole(); }
+	
+	Axiom ==> 
+	
+		// LIGHT SOURCES: SUN & SKY
+		if (showSunSky) (
+			[	
+				RH(90) lt:Translate
+				dr:DirectLight
+				dif:DiffuseLight
+			]
+			
+			{
+				// set sun&sky locations and initiate
+				updateIncomingLight();
+				lt.translateX = 0.5*fieldWidth;
+				lt.translateY = -0.5*fieldLength;
+				lt.translateZ = 0;
+				dr.initiate(3*Math.max(fieldLength,fieldWidth));
+				dr.update();
+				dif.initiate(3*Math.max(fieldLength,fieldWidth));
+				dif.update();
+			}	
+		)
+		
+		// insert reference light sensor
+		[
+			Translate(-2,-2,0) RefTile(0.5, 0.5)
+		]
+	
+	;
+	
+	/*
+	{
+		if (visualizeLight) {[
+			// colour gradient stick
+			==>> ^
+				{ ColorGradient colorMap1 = new ColorGradient("jet",0,50); }
+				Translate(-0.5, 0, 0)
+				for(int i:(0:50)) (
+					Box(0.01, 0.05, 0.01).(setShader(new RGBAShader(colorMap1.getColor(i))))
+				)
+			;
+		]}
+	}
+	*/
+
+]
+
+protected void analyseLight()
+//public void analyseLight()
+{
+	reconstructTree();
+	derive();
+	reconstructLeaves();
+	derive();
+	calcLight();
+	derive();
+	
+	// calculate average abs for each leaf rank
+	for (int i = 0; i < 10; i++) {
+		long count = count((* lm:LeafMesh, (lm[rank] == i) *));
+		double sum = sum((* lm:LeafMesh, (lm[rank] == i) *)[abs]);
+	
+		if (count > 0) {
+			println("rank " + i + ":\t" + sum + "\t" + count + "\t" + sum/count);
+		}
+	}	
+}
+
+public void reconstructTree()
+{
+	clearConsole();
+	
+	readCSV();
+	derive();
+	
+	// make sure that the topology is reconstructed, too
+	connect();
+	derive();
+	
+	// rotate the reconstructed tree, so that the z-axis is facing upwards 
+	Internode firstInternode = first((* Internode *));
+	[ fi:firstInternode ==> RU(180) fi; ]
+}
+
+public void calcLight()
+{
+	if (lmCPU) {
+		lm.compute();
+	} else {
+		lmFlux.setSeed(LM_SEED);
+		lmFlux.setMeasureMode(MeasureMode.RGB);
+		lmFlux.compute();
+	}
+	
+	[
+		// calculate light on soil tiles and sensors
+		ref:RefTile ::> {
+			if (lmCPU) {
+				ref[abs] = lm.getAbsorbedPower(ref).integrate();
+			} else {
+				ref[abs] = lmFlux.getAbsorbedPowerMeasurement(ref).integrate();
+			}
+			
+			ref[absm2] = ref[abs] / ref.getArea();
+		}
+	]
+	
+	derive();
+	
+	double absP = 0;
+	double maxAbsL = 0;
+	
+	RefTile rt = first((* RefTile *));
+	double ref = rt[absm2];
+	println("reference absm2: " + ref);
+	
+	if (flagLeafType == LEAF_TEXTURE) {[
+		lt:LeafTexture ::> {
+			if (lmCPU) {
+				absP += lm.getAbsorbedPower(lt).integrate();
+			} else {
+				absP += lmFlux.getAbsorbedPowerMeasurement(lt).integrate();
+			}
+		}
+	]} else if (flagLeafType == LEAF_MESH) {[
+		
+		m:MeshNodeCustom ::> {
+			m[area] = m.getSurfaceArea();
+			if (lmCPU) {
+				m[abs] = lm.getAbsorbedPower(m).integrate();
+			} else {
+				m[abs] = lmFlux.getAbsorbedPowerMeasurement(m).integrate();
+			}
+			m[absm2] = m[abs] / m[area];
+			m[fabs] = m[absm2] / ref;
+			
+			absP += m[abs]; 
+			maxAbsL = Math.max(maxAbsL, m[abs]);
+			
+			
+		}
+		
+		{ derive(); }
+		
+		l:LeafMesh ::> {
+			l[abs] = sum((* l (-->)+ MeshNodeCustom *)[abs]);
+			l[absm2] = sum((* l (-->)+ MeshNodeCustom *)[absm2]);
+		}
+	]}
+	
+	derive();
+	
+	//println("leafAngle = "+LEAF_ANGLE_MIN+", absorbed = "+absP);
+	println(LEAF_ANGLE_MIN+" "+absP);
+	
+	/*
+	if (flagLeafType == LEAF_MESH && visualizeLight) {
+		
+		//double maxArea;
+		//maxArea = (* m:MeshNodeCustom, (m[abs] == maxAbsL) *)[area];
+		
+		//ColorGradient colorMap1 = new ColorGradient("jet",0,maxAbsL/maxArea);
+		ColorGradient colorMap1 = new ColorGradient("jet",0,1);
+		[
+			mn:MeshNodeCustom ::> {
+				
+				//mn.(setShader(new RGBAShader(colorMap1.getColor(mn[abs]/mn[area]))));
+				mn.(setShader(new RGBAShader(colorMap1.getColor(mn[fabs]))));
+			}
+		]	
+	}
+	*/
+}
+
+// add textures to branches, roots and apical bud
+public void addTextureTree()
+[
+	// set the bark shader for internodes of the main stem and of branches
+	i:Internode, (i[part].equals("mainst") || i[part].equals("br") || i[part].equals("deadbr")) ::> {
+		i.setShader(barkShader);
+	}
+	
+	// set the bark shader for roots
+	i:Internode, (i[part].equals("rt") || i[part].equals("deadrt")) ::> {
+		i.setShader(rootShader);
+	}
+	
+	// set the shader for apical buds
+	i:Internode, (i[part].equals("apbud")) ::> {
+		i.setShader(budShader);
+	}
+	
+	// repaint the scene
+    { repaintView3D(); }
+]
+
+
+public void reconstructLeaves()
+{
+	if (flagLeafType == LEAF_MESH) {
+		// leaves as MeshNode with realistic shape
+		drawLeavesMesh();
+	} else if (flagLeafType == LEAF_TEXTURE) {
+		// leaves as parallelograms with a realistic texture
+		drawLeavesTexture();
+	} else if (flagLeafType == LEAF_DEFAULT) {
+		// leaves as cylinders with false colours for easier analysis
+		drawLeaves();
+		
+		// make the cylinders thinner and shorter for better visual analysis
+		derive();
+		[ l:Leaf ::> { l[diameter] = 0.005; l[length] = 0.02; } ]
+		//[ l:Leaf ::> { l[diameter] = 0.005; l[length] = 0.005; } ]
+	}
+}
+
+
+// read the csv file
+void readCSV()
+{
+	double[] point_first = new double[3];
+	double[] point_second = new double[3];
+	double sbranch = 0;
+	double baseDiameter = 0;
+	double topDiameter = 0;
+	double length = 0;
+	int id = 0;
+	
+	File data = new File(csv_path);
+	FileReader reader = new FileReader(data);
+	BufferedReader br = new BufferedReader(reader);
+	
+	String line_first;
+	String line_second;
+	
+	// skip the first line
+	line_first = br.readLine();
+	
+	// read and store the two first lines with measured points
+	line_first = br.readLine();
+	line_second = br.readLine();
+	
+	[
+		// hang all tree nodes on the RGGRoot
+		//Axiom ==>> ^
+		
+		==>> ^
+		while(line_second != null) (
+			{  
+				String[] line_data_first = line_first.split(",");
+				String[] line_data_second = line_second.split(",");
+				
+				// skip the line if no code specified, e.g.
+				// 2054,,-132.4164349,318.6876492,88.0223465,0.1,2007
+				if (line_data_second[1].length() == 0) {
+					line_second = br.readLine();
+					line_data_second = line_second.split(",");
+				}
+				
+				// start point of an internode
+				point_first[0] = Double.parseDouble(line_data_first[2]) -X0;
+				point_first[1] = Double.parseDouble(line_data_first[3]) -Y0;
+				point_first[2] = Double.parseDouble(line_data_first[4]) -Z0;
+				
+				// end point of an internode
+				point_second[0] = Double.parseDouble(line_data_second[2]) -X0;
+				point_second[1] = Double.parseDouble(line_data_second[3]) -Y0;
+				point_second[2] = Double.parseDouble(line_data_second[4]) -Z0;
+				
+				// internode orientation
+				Vector3d dir = new Vector3d(
+					point_second[0]-point_first[0],
+					point_second[1]-point_first[1],
+					point_second[2]-point_first[2]);
+				
+				// internode length
+				length = dir.length();
+			}
+			
+			[
+				if (drawNodes) (
+					// draw nodes
+					Node(line_data_first[0], line_data_first[1]).(
+						setTransform(new Point3d(
+							point_first[0]*CM_TO_M, point_first[1]*CM_TO_M, point_first[2]*CM_TO_M
+						)), setRadius(Double.parseDouble(line_data_first[5])*0.5*CM_TO_M))
+				)
+				
+				// draw internodes
+				// only if the code contains "<", e.g.
+				// 6009,*^<S4,-7.466965908,304.8832185,-109.0038086,0.2,2008
+				if (line_data_second[1].charAt(2) != '/') (
+					// set internode diameter
+					
+					// exceptional handling for such a case:
+					// 520,*^<S4,-14.5384091,444.647766,-24.36274281,,
+					// diameter from a previous line is taken
+					if (line_data_second.length == 5) {
+						baseDiameter = Double.parseDouble(line_data_first[5]);
+						topDiameter = baseDiameter;
+					
+					// exceptional handling for such a case:
+					// 5328,*^<S2,111.2872674,267.4437866,-17.3266612,,2005
+					// diameter from a previous line is taken
+					} else if (line_data_second[5].length() == 0) {
+						baseDiameter = Double.parseDouble(line_data_first[5]);
+						topDiameter = baseDiameter;
+					
+					// "normal" case:
+					// 5329,*^<S3,111.7465566,270.2626653,-12.26173607,0.2,2006
+					} else {
+						baseDiameter = Double.parseDouble(line_data_first[5]);
+						topDiameter = Double.parseDouble(line_data_second[5]);
+					}
+					
+					{ id = Integer.parseInt(line_data_first[0]); }
+
+					if (drawNodes) (
+						// nodes are also drawn
+						i:Internode(id, length*CM_TO_M, (baseDiameter/2)*CM_TO_M, (topDiameter/2)*CM_TO_M, 0, 0).(
+							setDirection(dir*CM_TO_M))
+					
+					) else (
+						// only internodes are drawn (not nodes) -> faster
+						i:Internode(id, length*CM_TO_M, (baseDiameter/2)*CM_TO_M, (topDiameter/2)*CM_TO_M, 0, 0).(
+							setLocation(new Point3d(
+								point_first[0]*CM_TO_M, point_first[1]*CM_TO_M, point_first[2]*CM_TO_M
+							)), setDirection(dir*CM_TO_M))
+						
+						// mark if this internode is the first internode of a branch
+						if (line_data_first[1].charAt(0) == '*') ( {
+							i.(setBegin());
+						})
+						
+						// store the internode part
+						{ i[part] = line_data_first[6]; }
+						
+						// highlight roots
+						if (i[part].equals("rt") || i[part].equals("deadrt")) ( {
+							i.setShader(new RGBAShader(0.4,0.4,0.4)); //i.setShader(CYAN);//
+						})
+						
+						// is internode an apical bud?
+						if (line_data_first[6].equals("apbud")) ( {
+							i[apBud] = true;
+							i.setShader(GREEN);
+						})
+						
+						// does it have leaves?
+						if (line_data_first.length > 7 && line_data_first[7].length() > 0) ({
+							i[nbLeaves] = Integer.parseInt(line_data_first[7]);
+						})
+					)
+				)
+			]
+			
+			{
+				// second line becomes the first line
+				line_first = line_second;
+				// and the new line is stored as the second line
+				line_second = br.readLine();
+			}
+		);
+	]
+	
+	br.close();
+	reader.close();
+}
+
+static void connect()
+{
+	[
+		cIntn:Internode, (cIntn[id2] != 1) ==>>
+		{
+			Internode gparent = selectWhereMin(
+				(* n:Internode, (n.getId() != cIntn.getId()) *),
+				distanceToLine(location(cIntn), toLine(n))
+			);
+			
+			// special case
+			// if parent and child internodes are both first internodes of new branches,
+			// select a new parent internode that is not a "beginBranch" internode
+			if (gparent[beginBranch] && cIntn[beginBranch]) {
+				//println("2 branches");
+				
+                gparent = selectWhereMin(
+                	(* n:Internode, (n.getId() != cIntn.getId() && !n[beginBranch]) *),
+                	distanceToLine(location(cIntn), toLine(n))
+                	);
+                //println("new parent: " + gparent[id2]);
+            }
+            
+            //println("parent " + gparent[id2] + ", child " + cIntn[id2]);
+            
+            Matrix4d pm = transformation(gparent, true).toMatrix4d();
+            Matrix4d cm = transformation(cIntn, false).toMatrix4d();
+            pm.invert();
+            cm.mul(pm, cm);
+            cIntn.setTransform(cm);
+        }
+        
+        // all internodes are connected by a branch age
+        //gparent +> cIntn;
+        
+        // decide if the child internode is forming a new branch
+        if (cIntn[beginBranch]) (
+        	// put branch edge between cIntn: first internode of a new
+        	// branch (when beginBranch is true) and gparent: internode from
+        	// which the new branch starts
+        	gparent +> cIntn
+        	// increase branching order for the next branch
+        	{ cIntn[order] = gparent[order]+1; }
+        ) else (
+        	// put successor edge between internodes of the same branch
+        	gparent cIntn
+        	// branching order of successor internodes stays the same
+        	{ cIntn[order] = gparent[order]; }
+        )
+        
+        ;
+	]
+	
+	derive();
+	
+	[   // remove double paths in the graph
+		n:RU --> j:Internode (* <+ Internode *), (j[id2] != 0) ==>> j;
+		n:Translate --> j:Internode (* <+ Internode *), (j[id2] != 0) ==>> n, j;
+		// remove internode connections to the root, except for the internode with id 1
+		//(* rgg:RGGRoot *) --> i:Internode, (i[id2] > 1) ==>> i;
+		rgg:RGGRoot --> i:Internode, (i[id2] > 1) ==>> rgg, i;
+	]
+	
+	derive();
+	
+	[   // store local transformation and x,z position of each internode
+		i:Internode ::>
+		{
+			i[ltr] = new Matrix4d(i.getLocalTransformation());
+			i[ltr].m33 = 1.0;
+		}
+	]
+	
+	
+	// update information for internodes if they have leaves or not
+	// in some cases apical buds have leaves on their base
+	(* i:Internode, (i[apBud] && i[nbLeaves] > 0) *)[hasLeaves] = true;
+	// check if there are internodes between the first one with leaves and
+	// the apical bud, if yes, they will be marked as having leaves as well
+	(* i:Internode (>)* j:Internode, (!i[apBud] && i[nbLeaves] > 0 && !j[apBud]) *)[hasLeaves] = true;
+	
+}
+
+public void selectBranch()
+[ 
+	// for the selected internode being part of a branch
+	i:Internode, (isSelected(i)) ::> {
+	   
+		// find the first internode of this branch (bb = beginBranch)
+		Internode bb;
+		bb = (* i (<--)* :(j:Internode), (j[beginBranch]) *);
+		
+		// color it
+		// a) as well as all internodes lying on this branch, with the same branching order
+		(* bb (-->)* b:Internode, (b[order] == bb[order]) *).(setShader(RED));
+		// this does the same...
+		//(* bb (>)* b:Internode *).(setShader(RED));
+		// b) as well as all internodes lying on this branch, with the same or higher branching order
+		//(* bb (-->)+ b:Internode, (b[order] >= bb[order]) *).(setShader(RED));
+		
+		// print their ids (in second run)
+		println(bb[id2]);
+		println((* bb (-->)+ b:Internode, (b[order] == bb[order]) *)[id2]);
+	}
+	
+	// repaint the scene
+	{ repaintView3D(); }
+]
+
+public void analyse()
+{
+	// Note
+	// first internodes of branches are included in the analysis (even if some
+	// of them are "invisible")
+		
+	[
+		// for each individual branch (stick of internodes with the same branching order)
+		// find the first internode of a branch
+		i:Internode, (i[beginBranch]) ::> {
+			// print its id & branching order
+			//println("id: " + i[id2] + "\torder: " + i[order]);
+			// highlight it
+			i.(setShader(BLUE));
+			
+			// calculate its length from base to minus apbud
+			double lengthNoBud = sum((* i (>)* j:Internode, (!j[apBud]) *)[length]);
+			// show lengths of its segments
+			//println((* i (>)* j:Internode, (!j[apBud]) *)[length]);
+			
+			// calculate the length of its bud
+			double lengthBud = sum((* i (>)* j:Internode, (j[apBud]) *)[length]);
+			// calculate the total branch length (including bud)
+			double lengthTotal = sum((* i (>)* Internode *)[length]);
+			
+			// store # leaves
+			long nbLeaves = 0;
+			nbLeaves = (* i (>)* l:Internode, (l[nbLeaves] > 0 && i[order]==l[order]) *)[nbLeaves];
+			
+			// show segments with leaves
+			// if leaves were only associated with apical buds, show these bud segments too
+			(* i (>)* j:Internode, (j[hasLeaves]) *).(setShader(YELLOW));
+			// calculate the length of leafy part
+			// don't consider segments with leaves that are apical buds
+			// (although they are highlighted as having leaves)
+			double lengthLeafy = sum((* i (>)* j:Internode, (j[hasLeaves] && !j[apBud]) *)[length]);
+			
+			// calculate the ratio leafy/lengthNoBud
+			double ratio = lengthLeafy/lengthNoBud;
+			
+			// calculate the angle
+			double brAngle = 0;
+			
+			if (i[order] > 1) {
+				Vector3d dirMother = new Vector3d();
+				dirMother = direction((* i (<+)+ :(Internode) *));
+				//println("mother " + (* i (<+)+ :(Internode) *)[id2]);
+				
+				Vector3d dirDaughter = new Vector3d();
+				dirDaughter = direction((* i (>)+ :(Internode) *));
+				//println("daughter " + (* i (>)+ :(Internode) *)[id2]);
+				
+				if (i[order] == 2 && (i[part].equals("rt") || i[part].equals("deadrt"))) {
+					brAngle = 180 - angle(dirMother, dirDaughter);
+				} else {
+					brAngle = angle(dirMother, dirDaughter);
+				}
+			//println("angle " + brAngle);
+			}       
+			
+			//ID, order, part, brAngle, Length Total, Length without Bud, Length Leafy, Length of Bud, Ratio, Number Leaves
+			println(i[id2]+","+i[order]+","+i[part]+","+brAngle+","+lengthTotal+","+lengthNoBud+","+lengthLeafy+","+lengthBud+","+ratio+","+nbLeaves);
+		}
+	]
+	
+	repaintView3D();
+}
+
+
+// round up to the first decimal place
+// based on: https://stackoverflow.com/questions/22186778/using-math-round-to-round-to-one-decimal-place
+static double roundup(double value, int precision) {
+	int scale = (int) Math.pow(10, precision);
+	return (double) Math.ceil(value * scale) / scale;
+}

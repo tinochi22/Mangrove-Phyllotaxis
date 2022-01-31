@@ -1,0 +1,529 @@
+import java.util.Random;
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.File;
+import java.util.StringTokenizer;
+import de.grogra.xl.util.FloatList;
+import de.grogra.xl.util.IntList;
+
+import static Model.*;
+
+/*
+ * methods for reconstructing leaves
+ *
+ */
+
+// draw leaves with realistic shape
+static void drawLeavesMesh()
+[
+	{
+		// reconstruct leaves as cylindrical objects (the method adds false colours eg to leafy segment)
+		drawLeaves();
+		derive();
+	}
+	
+	// replace "false" cylindrical leaves by placeholders for mesh
+	l:Leaf(len, wid) ==> 
+		lm:LeafMesh {lm[rank]=l[rank];}
+	;
+	
+	{
+		derive();
+		importLeaf(csv_path_leaf, 0.00008);
+	}
+]
+
+
+// draw leaves and bark with a realistic texture
+static void drawLeavesTexture()
+[
+	{
+		// reconstruct leaves as cylindrical objects (the method adds false colours eg to leafy segment)
+		drawLeaves();
+		derive();
+	}
+	
+	// apply textures
+	
+	// replace "false" cylindrical leaves by textured ones
+	Leaf(len, wid) ==> LeafTexture(len, wid);
+	
+	// set the bark shader for internodes of the main stem and of branches
+	i:Internode, (i[part].equals("mainst") || i[part].equals("br") || i[part].equals("deadbr")) ::> {
+		i.setShader(barkShader);
+	}
+	
+	// set the bark shader for roots
+	i:Internode, (i[part].equals("rt") || i[part].equals("deadrt")) ::> {
+		i.setShader(rootShader);
+	}
+	
+	// set the shader for apical buds
+	i:Internode, (i[part].equals("apbud")) ::> {
+		i.setShader(budShader);
+	}
+	
+]
+
+
+////////////////////////////////////////////////////////////////////////////
+// add leaves using a phyllotactic pattern based on measurements
+// leaf distribution - with unique random offset for each leaf pair
+////////////////////////////////////////////////////////////////////////////
+static void drawLeaves()
+[
+	// NO LEAFY SEGMENTS RECORDED
+	// if there were no internodes marked with leaves, but an apical bud,
+	// draw leaves on the preceding internode
+	
+	// TODO MODIFY LEAF DISTRIBUTION, LIKELY NEED TO ADD CORRECTION FACTOR AS FOR LEAFY SEGMENTS
+	pred:Internode (* i:Internode *), (i[hasLeaves] && i[apBud]) ==>
+	
+		pred
+		
+		{
+//			println("APICAL BUD");
+			pred.setShader(MAGENTA);
+			
+			int nbLeaves = i[nbLeaves];
+//			println("# leaves " + nbLeaves);
+			
+			double lengthLeafy = pred[length];
+//			println("length leafy " + lengthLeafy);
+			
+			// compute the number of leaf "groups" (rank+1; with a pair or single)
+			int nbLeafPosition = (nbLeaves%2==0) ? nbLeaves/2 : nbLeaves/2+1;
+//			println("# nbLeafPosition " + nbLeafPosition);
+			
+			// if the number of leaves is odd, select randomly the rank at
+			// which the single leaf will be placed
+			if (nbLeafPosition > 0 && nbLeaves%2 > 0) {
+				pred[rankSingle] = irandom(0, nbLeafPosition-1);
+//				println("position of the single leaf " + pred[rankSingle]);
+			}
+			
+			boolean hasLeaves = true;
+			
+			double cumDistance = 0;
+		}
+		
+		while (hasLeaves) (
+		
+			if (pred[rank] < nbLeafPosition) (
+			
+				{
+					// compute max number of leaves per rank
+					int max;
+					
+					if (pred[rank] == pred[rankSingle]) {
+						max = 1;
+//						println("SINGLE LEAF PLACED");
+					} else {
+						max = 2;
+//						println("LEAF PAIR PLACED");
+					}
+					
+					// compute distance from the base of the apical bud to the next leaf position
+					double tmp = cumDistance+MIN_LENGTH_TIP*CM_TO_M;
+					cumDistance += (lengthLeafy >= tmp) ? MIN_LENGTH_TIP*CM_TO_M : 0;
+//					println("distance from base: " + cumDistance);
+				}
+				
+				// a segment gets a pair of leaves
+				for (int j:1:max) ([
+				
+					//{ println("add a leaf pair"); }
+					
+					RH(LEAF_PHYLLO_ANGLE*pred[rank])
+					
+					M(-cumDistance)
+					
+					RH(j*LEAF_PAIR_ANGLE)
+					RL(random(LEAF_ANGLE_MIN, LEAF_ANGLE_MAX)) l:Leaf(LEAF_LENGTH, LEAF_WIDTH).(setShader(BLUE)) {l[rank] = i[rank];}
+				])
+				
+				{ pred[rank] += 1; }
+				
+			) else (
+			
+				{
+					//println("no leaf");
+					
+					hasLeaves = false;
+				}
+			)
+		)
+	;
+	
+	
+	// FOR LEAFY SEGMENTS
+	// look for the first internode (segment) on a branch with leaves, this
+	// internode stores the number of leaves in the whole leafy part; if the
+	// leafy part consists of a number of segments, compute the distribution of
+	// the leaves between these segments, using a pattern based on observations
+	i:Internode, (i[nbLeaves] > 0 && !i[apBud]) ::> {   
+//		println("i " + i[id2]);
+		
+		int nbLeaves = i[nbLeaves];
+//		println("# leaves " + nbLeaves);
+		
+		// compute the number of leaf "groups" (rank+1; with a pair or single)
+		int nbLeafPosition     = (nbLeaves%2==0) ? nbLeaves/2 : nbLeaves/2+1;
+//		println("# nbLeafPosition " + nbLeafPosition);
+		
+		// if the number of leaves is odd, select randomly the rank at
+		// which the single leaf will be placed
+		// (except base position ==> nbLeafPosition > 1)
+		if (nbLeafPosition > 1 && nbLeaves%2 > 0) {
+			i[rankSingle] = irandom(1, nbLeafPosition-1);
+//			println("position of the single leaf " + i[rankSingle]);
+		}
+		
+		// highlight leafy segments with yellow colour
+		(* i (>)* k:Internode, (i[nbLeaves] > 0 && !i[apBud] && !k[apBud]) *).setShader(YELLOW);
+		
+		// length of leafy part
+		double lengthLeafy = sum((* i (>)* k:Internode, (i[nbLeaves] > 0 && !i[apBud] && !k[apBud]) *)[length]);
+//		println("length leafy " + lengthLeafy); 
+		
+		// precompute distances between leaf pairs and the cumulative distance
+		// unit is cm
+		double distCum = 0;
+		i[distanceLeafPair] = new double[nbLeafPosition];
+		i[distanceLeafPairCum] = new double[nbLeafPosition];
+		
+		double maxCumL = 0;
+		
+		// first convert from m to cm
+		lengthLeafy *= M_TO_CM;
+		
+		for (int r:0:nbLeafPosition-1) {
+//			println("rank: " + r);
+			// leaf distance pattern based on measurements
+			double tmp = lengthLeafy/((r+A)*r);
+
+			//println("distCum " + distCum);
+			
+			if (r==0) {
+				i[distanceLeafPair][r] = 0;
+			} else if (distCum+MIN_LENGTH_TIP >= lengthLeafy) {
+				//println("BREAK cum dist leaf pair: " + distCum);
+				break;
+			} else {
+				if (tmp < MIN_LENGTH_TIP) {
+					i[distanceLeafPair][r] = MIN_LENGTH_TIP;
+				} else {
+					i[distanceLeafPair][r] = roundup(tmp,1);
+				}
+			}
+			
+			distCum += i[distanceLeafPair][r];
+			i[distanceLeafPairCum][r] = distCum;           
+			
+			//println("dist leaf pair: " + distanceLeafPair[r]);
+			//println("cum dist leaf pair: " + distanceLeafPairCum[r]);
+			//println(distanceLeafPair[r] + "\t" + distanceLeafPairCum[r]);   
+			
+			maxCumL = Math.max(maxCumL, i[distanceLeafPairCum][r]);
+			
+		}
+			
+//		println("maxCumL " + maxCumL);
+		
+		// correction factor to spread the leaves to the top of leafy part
+		double correctionFactor = lengthLeafy/maxCumL;
+		
+		// apply correction factor to each leaf position
+		for (int c:0:nbLeafPosition-1) {
+			
+			// add modified unique offset for each leaf position
+			if (RANDOM_LEAF_POS) {
+			
+				Random r = new Random();
+				double val = RANDOM_MAX;
+				
+				if (c < nbLeafPosition-1) {
+					
+					val = r.nextGaussian() * RANDOM_DEV + RANDOM_AVG;
+					//println("random factor nonterminal " + val);
+					
+				} else {
+					
+					val = RANDOM_AVG - Math.abs(r.nextGaussian()) * RANDOM_DEV;
+					//println("random factor terminal " + val);
+					
+				}
+				
+				val = Math.min(Math.abs(val), RANDOM_MAX);
+				//println("random max " + RANDOM_MAX + ", random factor " + val);
+				correctionFactor *= val;
+				
+				i[distanceLeafPairCum][c] *= correctionFactor;
+			
+			// without additional randomness
+			} else {
+			
+				i[distanceLeafPairCum][c] *= correctionFactor;
+			}
+			
+			
+		}
+		
+		// convert back to m!
+		for (int r:0:nbLeafPosition-1) {
+			i[distanceLeafPair][r] *= CM_TO_M;
+			i[distanceLeafPairCum][r] *= CM_TO_M;
+			
+			//println("DISTANCE CUM " + distanceLeafPairCum[r]);
+//			println(i[distanceLeafPair][r] + "\t" + i[distanceLeafPairCum][r]);
+		}
+		
+	}
+	
+	// add leaves to segments based on (pre)computed distance (in m) between leaf pairs
+	(* i:Internode (>)* *) j:Internode, (i[nbLeaves] > 0 && !i[apBud] && !j[apBud]) ==>
+		{
+			//println("first: " + i);
+			//println("following: " + j);
+			
+			i[distanceInternodeCumPrevious] = i[distanceInternodeCum];
+			i[distanceInternodeCum] += j[length];
+//			println(); println(i); println(j);
+//			println("dist node beg: " + i[distanceInternodeCumPrevious]);
+//			println("dist node end: " + i[distanceInternodeCum]);
+			
+			int nbLeaves = i[nbLeaves];
+//			println("# leaves " + nbLeaves);
+			
+			// compute the number of leaf "groups" (rank+1; with a pair or single)
+			int nbLeafPosition     = (nbLeaves%2==0) ? nbLeaves/2 : nbLeaves/2+1;
+//			println("# nbLeafPosition " + nbLeafPosition);
+			
+			//for (int r:0:nbLeafPosition-1) {
+			//    println(i[distanceLeafPair][r] + "\t" + i[distanceLeafPairCum][r]);
+			//}
+		
+		}
+		
+		j
+		
+		// first segment of the leafy part has a pair of leaves always at its base
+		if (i[rank] == 0) (
+			
+//			{ println("base leaf pair");}
+			
+			{
+				int max;
+				
+				if (nbLeaves > 1) {
+					max = 2;
+				} else {
+					max = 1;
+				}
+			}
+			
+			// a segment gets a pair of leaves
+			for (int k:1:max) ([
+			
+				//RH(LEAF_PHYLLO_ANGLE) // first pair of leaves does not need to be rotated
+				
+				M(-j[length])
+				
+				RH(k*LEAF_PAIR_ANGLE)
+				RL(random(LEAF_ANGLE_MIN, LEAF_ANGLE_MAX)) l:Leaf(LEAF_LENGTH, LEAF_WIDTH).(setShader(PINK)) {l[rank] = i[rank];}
+			])
+			
+			{
+				i[rank] += 1;
+//				println("base leaf pair added, next rank: " + i[rank]);
+			}
+			
+		)       
+		
+		{ boolean hasLeaves = true; }
+		
+		while (hasLeaves && i[rank] < nbLeafPosition) (
+			
+			if (i[distanceLeafPairCum][i[rank]] > i[distanceInternodeCumPrevious] && i[distanceLeafPairCum][i[rank]] <= i[distanceInternodeCum]) (
+			
+				{
+//					println("dist leaf pair: " + i[distanceLeafPairCum][i[rank]]);
+//					println("add a leaf pair");
+//					println("rank " + i[rank]);
+				}
+				
+				{
+					int max;
+					
+					// random position
+					if (i[rankSingle] > 0 && i[rank] == i[rankSingle]) {
+						max = 1;
+//						println("SINGLE LEAF PLACED");
+					} else {
+						max = 2;
+					}
+					
+				}
+				
+				// a segment gets a pair of leaves
+				for (int k:1:max) ([
+					
+					//{ println("add a leaf pair"); }
+					
+					RH(LEAF_PHYLLO_ANGLE*i[rank])
+					
+					{
+						double vm = i[distanceLeafPairCum][i[rank]]-i[distanceInternodeCumPrevious];
+//						println("vm " + vm);  
+					}               
+					
+					M(-j[length]+vm)                   
+					
+					//M(-s[length]-distanceInternodeCumPrevious)
+					//Translate(m.x, m.y, m.z)
+					
+					RH(k*LEAF_PAIR_ANGLE)
+					RL(random(LEAF_ANGLE_MIN, LEAF_ANGLE_MAX)) l:Leaf(LEAF_LENGTH, LEAF_WIDTH).(setShader(RED)) {l[rank] = i[rank];}
+				])
+				
+				{ i[rank] += 1; }
+				
+			) else (
+				
+				{
+//					println("dist leaf pair: " + i[distanceLeafPairCum][i[rank]]);
+//					println("no leaf");
+//					println("rank " + i[rank]);
+					
+					hasLeaves = false;
+				}
+			)
+		)
+		
+		{
+			//distanceInternodePrevious = distanceInternodeCum;
+			//distanceInternodeCum += s[length];
+			//println("dist node: " + distanceInternodeCum);
+//			println("added leaf pairs: " + i[rank]);
+		}
+	;	
+]
+
+
+// based on leaf import method by M. Henke
+private static void importLeaf(String filename, float scaleFactor)  throws FileNotFoundException, IOException {
+	//read vertex
+	StringBuffer sb = new StringBuffer();
+	BufferedReader inFile = new BufferedReader(new FileReader(new File(filename).getAbsolutePath()));
+	String line = "";
+
+	//process header
+	
+	// skip the first line
+	inFile.readLine();
+	// read number of vertices
+	StringTokenizer st = new StringTokenizer(inFile.readLine());
+	st.nextToken(); st.nextToken();
+	int numberOfVertices = Integer.parseInt(st.nextToken());
+	
+	// skip 3 lines
+	inFile.readLine(); inFile.readLine(); inFile.readLine();
+	// read number of faces
+	st = new StringTokenizer(inFile.readLine());
+	st.nextToken(); st.nextToken();
+	int numberOfFaces = Integer.parseInt(st.nextToken());
+	// skip 1 line
+	inFile.readLine();
+	println("import leaf: read "+numberOfVertices+" vertices and "+numberOfFaces+" faces");
+	
+	// read vertex lines
+	int i = 0;
+	while (i < numberOfVertices) {
+		sb.append(inFile.readLine()+" ");
+		i++;
+	}
+
+	// convert points to array
+	st = new StringTokenizer(sb.toString());
+	vertex = new double[3*numberOfVertices];
+	i = 0;
+	while (st.hasMoreTokens()) {
+		vertex[i++] = scaleFactor*Double.parseDouble(st.nextToken()); //x
+		vertex[i++] = scaleFactor*Double.parseDouble(st.nextToken()); //y
+		vertex[i++] = 0; //z
+	}
+	
+	// read faces lines
+	sb = new StringBuffer();
+	i = 0;
+	while (i < numberOfFaces) {
+		sb.append(inFile.readLine()+" ");
+		i++;
+	}
+	inFile.close();
+		
+	// convert points to array
+	st = new StringTokenizer(sb.toString());
+	faces = new double[3*numberOfFaces];
+	i = 0;
+	while (st.hasMoreTokens()) {
+		// -1, because the counting starts with 1 in Matlab output, not 0
+		faces[i++] = Double.parseDouble(st.nextToken()) - 1;
+		faces[i++] = Double.parseDouble(st.nextToken()) - 1;
+		faces[i++] = Double.parseDouble(st.nextToken()) - 1;
+	}
+	
+	//draw faces/geometry
+	drawTriangles(vertex, faces);
+}
+
+private static void drawTriangles(double[] points, double[] triangles) {
+	
+	[
+		l:LeafMesh ==> l
+			{ double petioleLength = 0.014; }
+			[ Petiole(petioleLength, 0.002) ]	// petiole
+			
+			Translate(-0.03+0.006, 0, -0.0285+0.142+petioleLength) // importLeaf(path, 0.00008); 
+			RL(-90)
+		;
+	]
+	
+	derive();
+	
+	//println(triangles.length);
+	
+	for (int i = 0; i < triangles.length; i += 3) {
+		int t1 = (int)triangles[i+0];
+		int t2 = (int)triangles[i+1];
+		int t3 = (int)triangles[i+2];
+		
+		FloatList vertexData = new FloatList(new float[] {
+			points[3*t1+0], points[3*t1+1], points[3*t1+2],
+			points[3*t2+0], points[3*t2+1], points[3*t2+2],
+			points[3*t3+0], points[3*t3+1], points[3*t3+2]
+		});
+		
+		//println(i);
+		//println("t = "+t1+" "+t2+" "+t3);
+		//println("p = "+vertexData);
+		
+		PolygonMesh polygonMesh = new PolygonMesh();
+		polygonMesh.setIndexData(new IntList(new int[] {0, 1, 2}));
+		polygonMesh.setVertexData(vertexData);
+		
+		[
+			(* LeafMesh [Petiole] Translate *) rl:RL ==>
+				rl
+				
+				MeshNodeCustom.(
+				setPolygons(polygonMesh), 
+				setShader(mangroveShaderAS)
+			)
+			;
+		]
+	}
+}

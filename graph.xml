@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?><graph xmlns:gx="http://grogra.de/xmlpersistence" xmlns="http://grogra.de/xmlpersistence">
+ <node root="MainGraph" id="0" type="de.grogra.graph.impl.Node">
+  <data gx:name="extentIndex" gx:value="7"/>
+  <node id="1902219" type="de.grogra.rgg.RGGRoot" edges="+">
+   <node id="1902225" type="de.grogra.turtle.Translate" edges="+">
+    <data gx:name="translateX" gx:value="-2.0"/>
+    <data gx:name="translateY" gx:value="-2.0"/>
+    <node id="1902226" type="Model$RefTile" edges="-">
+     <data gx:name="len" gx:value="0.5"/>
+     <data gx:name="wid" gx:value="0.5"/>
+    </node>
+   </node>
+   <node id="1902221" type="de.grogra.turtle.RH" edges="+">
+    <data gx:name="angle" gx:value="90.0"/>
+    <node id="1902222" type="de.grogra.turtle.Translate" edges="-">
+     <data gx:name="translateX" gx:value="5.0"/>
+     <data gx:name="translateY" gx:value="-5.0"/>
+     <node id="1902223" type="light$DirectLight" edges="-">
+      <array gx:name="power" gx:value="10.424639 10.85246 11.267095 11.662626 12.033406 12.3741455 12.679979 12.946541 13.170026 13.347246 13.475672 13.553466 13.579521 13.553466 13.475672 13.347246 13.170026 12.946541 12.679979 12.3741455 12.033406 11.662626 11.267095 10.852462"/>
+      <array gx:name="beta" gx:value="8.629394E-7 5.888819 11.655965 17.270876 22.693977 27.873684 32.742733 37.213997 41.17714 44.498405 47.02806 48.62019 49.164726 48.620193 47.02806 44.498405 41.17714 37.213997 32.742733 27.873684 22.693964 17.270882 11.655965 5.888831"/>
+      <array gx:name="azimuth" gx:value="114.631775 116.82834 119.35422 122.269104 125.64856 129.58548 134.1897 139.58224 145.87949 153.16003 161.4118 170.47205 180.0 189.52794 198.5882 206.83997 214.12051 220.41776 225.8103 230.41452 234.35144 237.73088 240.64578 243.17166"/>
+      <data gx:name="dist" gx:value="30.0"/>
+      <node id="1902224" type="light$DiffuseLight" edges="-">
+       <data gx:name="power" gx:value="602.0094"/>
+       <data gx:name="dist" gx:value="30.0"/>
+      </node>
+     </node>
+    </node>
+   </node>
+  </node>
+ </node>
+ <node root="MetaGraph" id="1" type="de.grogra.graph.impl.Node">
+  <data gx:name="extentIndex" gx:value="7"/>
+  <node id="9" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="10"/>
+   <node id="10" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="11"/>
+    <node id="11" type="de.grogra.imp3d.shading.ImageMap">
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/360px-Mangrovebark&quot;"/>
+     <node ref="10" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="12" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="13"/>
+   <node id="13" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="14"/>
+    <node id="14" type="de.grogra.imp3d.shading.ImageMap">
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/1Bark_sm&quot;"/>
+     <node ref="13" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="15" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="16"/>
+   <node id="16" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="17"/>
+    <node id="17" type="de.grogra.imp3d.shading.ImageMap">
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/GreenMangLeaf2light&quot;"/>
+     <node ref="16" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="18" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="19"/>
+   <node id="19" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="20"/>
+    <node id="20" type="de.grogra.imp3d.shading.ImageMap">
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/GreenMangLeaf11&quot;"/>
+     <node ref="19" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="12202" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="12203"/>
+   <node id="12203" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="12204"/>
+    <node id="12204" type="de.grogra.imp3d.shading.ImageMap">
+     <ref gx:name="input" gx:value="15917"/>
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/stem2&quot;"/>
+     <node id="15917" type="de.grogra.imp3d.shading.AffineUVTransformation">
+      <data gx:name="scaleU" gx:value="4.0"/>
+      <node ref="12204" edges="*channel.input"/>
+     </node>
+     <node ref="12203" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="15918" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="15919"/>
+   <node id="15919" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="15920"/>
+    <node id="15920" type="de.grogra.imp3d.shading.ImageMap">
+     <ref gx:name="input" gx:value="17216"/>
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/root1&quot;"/>
+     <node id="17216" type="de.grogra.imp3d.shading.AffineUVTransformation">
+      <data gx:name="scaleU" gx:value="4.0"/>
+      <node ref="15920" edges="*channel.input"/>
+     </node>
+     <node ref="15919" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="17217" type="de.grogra.graph.impl.SharedObjectNode" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <ref gx:name="object" gx:value="17218"/>
+   <node id="17218" type="de.grogra.imp3d.shading.Phong" edges="edge.sharedobject">
+    <ref gx:name="diffuse" gx:value="17219"/>
+    <node id="17219" type="de.grogra.imp3d.shading.ImageMap">
+     <shared gx:name="image" gx:value="/:&quot;/project/objects/images/bud3&quot;"/>
+     <node ref="17218" edges="*channel.color"/>
+    </node>
+   </node>
+  </node>
+  <node id="1887696" type="Model" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <object gx:name="initialTurtleState" color="14" length="100.0" diameter="0.1" tropism="0.0" parameter="0.0" carbon="0.0" heartwood="0.0" internodeCount="0"/>
+  </node>
+  <node id="1887697" type="leaves" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <object gx:name="initialTurtleState" color="14" length="100.0" diameter="0.1" tropism="0.0" parameter="0.0" carbon="0.0" heartwood="0.0" internodeCount="0"/>
+  </node>
+  <node id="1887698" type="environment" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <object gx:name="initialTurtleState" color="14" length="100.0" diameter="0.1" tropism="0.0" parameter="0.0" carbon="0.0" heartwood="0.0" internodeCount="0"/>
+  </node>
+  <node id="1887699" type="light" edges="+">
+   <data gx:name="extentIndex" gx:value="7"/>
+   <object gx:name="initialTurtleState" color="14" length="100.0" diameter="0.1" tropism="0.0" parameter="0.0" carbon="0.0" heartwood="0.0" internodeCount="0"/>
+  </node>
+ </node>
+</graph>
