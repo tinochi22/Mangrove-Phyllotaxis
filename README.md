@@ -3,4 +3,5 @@ Model for 3D reconstruction of architecture and phyllotactic pattern at the exam
 
 ## Instalation
 Download GroIMP, recommended version 1.6: http://ufgb966.forst.uni-goettingen.de/GroIMP/
+
 To run the model, open the project.gs file. 
